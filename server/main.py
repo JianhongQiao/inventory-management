@@ -1,3 +1,5 @@
+import hashlib
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -46,6 +48,75 @@ def apply_filters(items: list, warehouse: Optional[str] = None, category: Option
 
     return filtered
 
+LEAD_TIME_BUCKETS = {
+    'circuit boards': (5, 8),
+    'power supplies': (5, 8),
+    'sensors': (6, 9),
+    'controllers': (4, 7),
+    'actuators': (8, 14),
+}
+DEFAULT_LEAD_TIME_BUCKET = (7, 12)
+
+def get_lead_time_days(sku: str, category: str) -> int:
+    """Deterministic, stable lead-time simulation (hashlib, not builtin hash() which is
+    salted per-process and would change on every server restart)"""
+    low, high = LEAD_TIME_BUCKETS.get((category or '').lower(), DEFAULT_LEAD_TIME_BUCKET)
+    digest = hashlib.md5(f"{sku}:{category}".encode()).hexdigest()
+    return low + (int(digest, 16) % (high - low + 1))
+
+def compute_restocking_candidates(warehouse: Optional[str], category: Optional[str]) -> list:
+    """Join demand_forecasts to inventory by sku (scoped to warehouse/category filters),
+    compute shortfall, and rank by urgency: increasing trend first, then furthest below
+    reorder_point, then largest shortfall, then sku as a stable tiebreak."""
+    filtered_inventory = apply_filters(inventory_items, warehouse, category)
+    inventory_by_sku = {item['sku']: item for item in filtered_inventory}
+
+    candidates = []
+    for forecast in demand_forecasts:
+        inv = inventory_by_sku.get(forecast['item_sku'])
+        if not inv:
+            continue
+        shortfall = max(forecast['forecasted_demand'] - inv['quantity_on_hand'], 0)
+        if shortfall <= 0:
+            continue
+        candidates.append({
+            'sku': inv['sku'], 'name': inv['name'], 'category': inv['category'],
+            'warehouse': inv['warehouse'], 'trend': forecast['trend'],
+            'quantity_on_hand': inv['quantity_on_hand'], 'reorder_point': inv['reorder_point'],
+            'forecasted_demand': forecast['forecasted_demand'], 'shortfall_qty': shortfall,
+            'unit_cost': inv['unit_cost'], 'line_cost': round(shortfall * inv['unit_cost'], 2),
+            'lead_time_days': get_lead_time_days(inv['sku'], inv['category']),
+            '_stock_gap': inv['quantity_on_hand'] - inv['reorder_point'],
+        })
+
+    candidates.sort(key=lambda c: (
+        0 if c['trend'] == 'increasing' else 1,
+        c['_stock_gap'],
+        -c['shortfall_qty'],
+        c['sku']
+    ))
+    for idx, c in enumerate(candidates):
+        c['rank'] = idx + 1
+        c.pop('_stock_gap', None)
+    return candidates
+
+def apply_budget_greedy(candidates: list, budget: float):
+    """Prefix-greedy: fund in rank order, stop at the first item that doesn't fit the
+    remaining budget. Everything from that point on is unfunded (not a knapsack search)."""
+    remaining = budget
+    stopped = False
+    items = []
+    for c in candidates:
+        item = dict(c)
+        if not stopped and item['line_cost'] <= remaining:
+            item['funded'] = True
+            remaining -= item['line_cost']
+        else:
+            item['funded'] = False
+            stopped = True
+        items.append(item)
+    return items, (budget - remaining), remaining
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -80,6 +151,8 @@ class Order(BaseModel):
     actual_delivery: Optional[str] = None
     warehouse: Optional[str] = None
     category: Optional[str] = None
+    lead_time_days: Optional[int] = None
+    source: Optional[str] = None
 
 class DemandForecast(BaseModel):
     id: str
@@ -89,6 +162,40 @@ class DemandForecast(BaseModel):
     forecasted_demand: int
     trend: str
     period: str
+
+class RestockingItem(BaseModel):
+    sku: str
+    name: str
+    category: str
+    warehouse: str
+    trend: str
+    quantity_on_hand: int
+    reorder_point: int
+    forecasted_demand: int
+    shortfall_qty: int
+    unit_cost: float
+    line_cost: float
+    lead_time_days: int
+    rank: int
+    funded: bool
+
+class RestockingRecommendationResponse(BaseModel):
+    budget: float
+    warehouse: Optional[str] = None
+    category: Optional[str] = None
+    total_candidates: int
+    funded_count: int
+    excluded_count: int
+    total_shortfall_cost: float
+    funded_cost: float
+    remaining_budget: float
+    items: List[RestockingItem]
+
+class CreateRestockingOrderRequest(BaseModel):
+    budget: float
+    warehouse: Optional[str] = None
+    category: Optional[str] = None
+    customer: Optional[str] = "Internal Restocking"
 
 class BacklogItem(BaseModel):
     id: str
@@ -178,6 +285,70 @@ def get_backlog():
         item_dict["has_purchase_order"] = has_po
         result.append(item_dict)
     return result
+
+@app.get("/api/restocking/recommendations", response_model=RestockingRecommendationResponse)
+def get_restocking_recommendations(
+    budget: float = 0.0,
+    warehouse: Optional[str] = None,
+    category: Optional[str] = None
+):
+    """Get ranked restock recommendations within budget, scoped to warehouse/category filters"""
+    if budget < 0:
+        raise HTTPException(status_code=400, detail="Budget must be non-negative")
+    candidates = compute_restocking_candidates(warehouse, category)
+    total_shortfall_cost = round(sum(c['line_cost'] for c in candidates), 2)
+    items, funded_cost, remaining = apply_budget_greedy(candidates, budget)
+    funded_count = sum(1 for i in items if i['funded'])
+    return {
+        "budget": budget, "warehouse": warehouse, "category": category,
+        "total_candidates": len(items), "funded_count": funded_count,
+        "excluded_count": len(items) - funded_count,
+        "total_shortfall_cost": total_shortfall_cost,
+        "funded_cost": round(funded_cost, 2), "remaining_budget": round(remaining, 2),
+        "items": items
+    }
+
+@app.post("/api/restocking/orders", response_model=Order, status_code=201)
+def create_restocking_order(request: CreateRestockingOrderRequest):
+    """Submit the current restocking recommendation (recomputed server-side) as a new order"""
+    if request.budget < 0:
+        raise HTTPException(status_code=400, detail="Budget must be non-negative")
+    candidates = compute_restocking_candidates(request.warehouse, request.category)
+    items, funded_cost, remaining = apply_budget_greedy(candidates, request.budget)
+    funded_items = [i for i in items if i['funded']]
+    if not funded_items:
+        raise HTTPException(status_code=400, detail="No items can be funded with the given budget")
+
+    order_items = [
+        {"sku": i['sku'], "name": i['name'], "quantity": i['shortfall_qty'],
+         "unit_price": i['unit_cost'], "lead_time_days": i['lead_time_days']}
+        for i in funded_items
+    ]
+    max_lead_time = max(i['lead_time_days'] for i in funded_items)
+    order_date = datetime.now()
+    expected_delivery = order_date + timedelta(days=max_lead_time)
+    warehouses = {i['warehouse'] for i in funded_items}
+    categories = {i['category'] for i in funded_items}
+    rso_count = sum(1 for o in orders if o['order_number'].startswith('RSO-2025-'))
+
+    new_order = {
+        "id": str(len(orders) + 1),
+        "order_number": f"RSO-2025-{rso_count + 1:04d}",
+        "customer": request.customer or "Internal Restocking",
+        "items": order_items,
+        "status": "Processing",
+        "order_date": order_date.isoformat(),
+        "expected_delivery": expected_delivery.isoformat(),
+        "total_value": round(sum(i['line_cost'] for i in funded_items), 2),
+        "actual_delivery": None,
+        # '' not None -- apply_filters calls .lower() on warehouse/category when /api/orders is filtered
+        "warehouse": warehouses.pop() if len(warehouses) == 1 else '',
+        "category": categories.pop() if len(categories) == 1 else '',
+        "lead_time_days": max_lead_time,
+        "source": "restocking"
+    }
+    orders.append(new_order)
+    return new_order
 
 @app.get("/api/dashboard/summary")
 def get_dashboard_summary(

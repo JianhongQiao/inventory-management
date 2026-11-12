@@ -6,6 +6,7 @@ export default {
     orders: '注文',
     finance: '財務',
     demandForecast: '需要予測',
+    restocking: '補充',
     companyName: '触媒コンポーネンツ',
     subtitle: '在庫管理システム'
   },
@@ -112,6 +113,7 @@ export default {
     onTimeDelivery: '定時配達',
     itemsCount: '{count}件',
     quantity: '数量',
+    submittedOrders: '発注済み補充注文',
     table: {
       orderNumber: '注文番号',
       orderId: '注文ID',
@@ -125,7 +127,9 @@ export default {
       totalValue: '合計金額',
       status: 'ステータス',
       expectedDelivery: '予定配達日',
-      actualDelivery: '実際の配達日'
+      actualDelivery: '実際の配達日',
+      leadTime: 'リードタイム',
+      days: '日'
     }
   },
 
@@ -186,6 +190,42 @@ export default {
       trend: 'トレンド',
       period: '期間'
     }
+  },
+
+  // Restocking
+  restocking: {
+    title: '補充',
+    description: '予算を設定すると、需要予測に基づいたおすすめの補充品目が表示されます',
+    budgetLabel: '利用可能な予算',
+    recommendedItems: 'おすすめの補充品目',
+    stats: {
+      budget: '予算',
+      fundedCost: '発注予定コスト',
+      itemsFunded: '発注対象品目数',
+      itemsNotFunded: '未発注品目数'
+    },
+    table: {
+      rank: '順位',
+      sku: 'SKU',
+      itemName: '品目名',
+      category: 'カテゴリ',
+      warehouse: '倉庫',
+      trend: 'トレンド',
+      quantityOnHand: '手持在庫数',
+      reorderPoint: '再注文点',
+      forecastedDemand: '予測需要',
+      shortfall: '不足数量',
+      unitCost: '単価',
+      lineCost: '小計',
+      leadTime: 'リードタイム'
+    },
+    funded: '発注対象',
+    notFunded: '今回は未発注',
+    placeOrder: '発注する',
+    placingOrder: '発注中...',
+    orderPlaced: '注文 {orderNumber} が正常に発注されました',
+    noItemsFunded: '品目を発注するには予算を増やしてください',
+    noCandidates: '現在のフィルターに該当する補充候補はありません'
   },
 
   // Filters
@@ -377,6 +417,7 @@ export default {
     'Advanced Components Inc': 'アドバンストコンポーネンツ',
     'Premier Industries': 'プレミア工業',
     'Stellar Components Ltd': 'ステラコンポーネンツ',
-    'Dynamic Systems Ltd': 'ダイナミックシステムズ'
+    'Dynamic Systems Ltd': 'ダイナミックシステムズ',
+    'Internal Restocking': '社内補充'
   }
 }

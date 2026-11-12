@@ -6,6 +6,7 @@ export default {
     orders: 'Orders',
     finance: 'Finance',
     demandForecast: 'Demand Forecast',
+    restocking: 'Restocking',
     companyName: 'Catalyst Components',
     subtitle: 'Inventory Management System'
   },
@@ -112,6 +113,7 @@ export default {
     onTimeDelivery: 'On-Time Delivery',
     itemsCount: '{count} items',
     quantity: 'Qty',
+    submittedOrders: 'Submitted Orders',
     table: {
       orderNumber: 'Order Number',
       orderId: 'Order ID',
@@ -125,7 +127,9 @@ export default {
       totalValue: 'Total Value',
       status: 'Status',
       expectedDelivery: 'Expected Delivery',
-      actualDelivery: 'Actual Delivery'
+      actualDelivery: 'Actual Delivery',
+      leadTime: 'Lead Time',
+      days: 'days'
     }
   },
 
@@ -186,6 +190,42 @@ export default {
       trend: 'Trend',
       period: 'Period'
     }
+  },
+
+  // Restocking
+  restocking: {
+    title: 'Restocking',
+    description: 'Set a budget to get ranked restock recommendations from the demand forecast',
+    budgetLabel: 'Available Budget',
+    recommendedItems: 'Recommended Items',
+    stats: {
+      budget: 'Budget',
+      fundedCost: 'Funded Cost',
+      itemsFunded: 'Items Funded',
+      itemsNotFunded: 'Items Not Funded'
+    },
+    table: {
+      rank: 'Rank',
+      sku: 'SKU',
+      itemName: 'Item Name',
+      category: 'Category',
+      warehouse: 'Warehouse',
+      trend: 'Trend',
+      quantityOnHand: 'On Hand',
+      reorderPoint: 'Reorder Point',
+      forecastedDemand: 'Forecasted Demand',
+      shortfall: 'Shortfall Qty',
+      unitCost: 'Unit Cost',
+      lineCost: 'Line Cost',
+      leadTime: 'Lead Time'
+    },
+    funded: 'Funded',
+    notFunded: 'Not funded this round',
+    placeOrder: 'Place Order',
+    placingOrder: 'Placing Order...',
+    orderPlaced: 'Order {orderNumber} placed successfully',
+    noItemsFunded: 'Increase the budget to fund at least one item',
+    noCandidates: 'No restock candidates for the current filters'
   },
 
   // Filters
